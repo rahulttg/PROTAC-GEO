@@ -1,0 +1,9 @@
+dataset_path: data/raw/protac_dataset.csv
+label_column: label
+smiles_column: smiles
+target_id_column: target_id
+e3_id_column: e3_id
+target_sequence_column: target_sequence
+e3_sequence_column: e3_sequence
+structure_dir: data/structures
+processed_dir: data/processed

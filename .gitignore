@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.env
+data/runtime_uploads/*
+!data/runtime_uploads/.gitkeep
+results/runtime/*
+*.log

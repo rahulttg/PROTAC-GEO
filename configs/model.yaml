@@ -1,0 +1,7 @@
+chemical_dim: 256
+protein_dim: 1280
+geometry_dim: 32
+hidden_dim: 256
+dropout: 0.20
+num_classes: 2
+seed: 42
