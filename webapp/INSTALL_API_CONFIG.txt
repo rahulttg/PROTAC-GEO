@@ -1,0 +1,5 @@
+1. Upload api-config.js to the same folder as index.html on GitHub Pages.
+2. In index.html, BEFORE <script src="app.js"></script>, add:
+   <script src="api-config.js"></script>
+3. Replace YOUR-RENDER-SERVICE with the actual Render URL.
+4. Keep the existing app.js; it already reads window.PROTAC_GEO_API_BASE.

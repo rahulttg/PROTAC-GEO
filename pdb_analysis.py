@@ -458,18 +458,9 @@ def analyze_ternary_complex(
         )
         result["summary"]["protac_poi_contacts"] = c["count"]
         result["summary"]["protac_poi_min_distance_A"] = c["min_distance_A"]
-        poi_hbonds = hbond_like(protac_atoms, poi_atoms)
-        result["protac_poi_hbond_like_pairs"] = [
-            {
-                "protac_atom": x["name"],
-                "protac_residue": f'{x["resname"]}{x["resseq"]}:{x["chain"]}',
-                "protein_atom": y["name"],
-                "protein_residue": f'{y["resname"]}{y["resseq"]}:{y["chain"]}',
-                "distance_A": round(d, 3),
-            }
-            for x, y, d in poi_hbonds
-        ]
-        result["summary"]["protac_poi_hbond_like"] = len(poi_hbonds)
+        result["summary"]["protac_poi_hbond_like"] = len(
+            hbond_like(protac_atoms, poi_atoms)
+        )
 
     if protac_atoms and e3_atoms:
         c = contacts(protac_atoms, e3_atoms, contact_cutoff_A)
@@ -479,18 +470,9 @@ def analyze_ternary_complex(
         )
         result["summary"]["protac_e3_contacts"] = c["count"]
         result["summary"]["protac_e3_min_distance_A"] = c["min_distance_A"]
-        e3_hbonds = hbond_like(protac_atoms, e3_atoms)
-        result["protac_e3_hbond_like_pairs"] = [
-            {
-                "protac_atom": x["name"],
-                "protac_residue": f'{x["resname"]}{x["resseq"]}:{x["chain"]}',
-                "protein_atom": y["name"],
-                "protein_residue": f'{y["resname"]}{y["resseq"]}:{y["chain"]}',
-                "distance_A": round(d, 3),
-            }
-            for x, y, d in e3_hbonds
-        ]
-        result["summary"]["protac_e3_hbond_like"] = len(e3_hbonds)
+        result["summary"]["protac_e3_hbond_like"] = len(
+            hbond_like(protac_atoms, e3_atoms)
+        )
 
     result["summary"]["poi_interface_residue_count"] = len(
         result["poi_interface_residues"]
@@ -666,7 +648,6 @@ def analyze_pdb(
         "accessible_lysines": sum(
             1 for x in accessible if x["accessible_proxy"]
         ),
-        "all_lysines": accessible,
         "nearest_lysines": accessible[:10],
         "nearest_lysine_to_protac": nearest,
         "chain_centroids": {

@@ -4,7 +4,6 @@ import io
 import os
 import uuid
 import html
-import json
 import math
 import tempfile
 from pathlib import Path
@@ -264,12 +263,6 @@ def analyze(payload):
             "protac_e3_hbond_like": sm.get(
                 "protac_e3_hbond_like", 0
             ),
-            "protac_poi_hbond_like_pairs": tg.get(
-                "protac_poi_hbond_like_pairs", []
-            ),
-            "protac_e3_hbond_like_pairs": tg.get(
-                "protac_e3_hbond_like_pairs", []
-            ),
             "accessible_lysines": structure.get(
                 "accessible_lysine_count",
                 structure.get("accessible_lysines", 0),
@@ -362,6 +355,11 @@ def analyze(payload):
     return result, pdb_text
 
 
+@app.route("/health")
+def health():
+    return jsonify({"ok": True, "service": "PROTAC-GEO API"})
+
+
 @app.route("/")
 def home():
     return send_from_directory(WEB, "index.html")
@@ -441,450 +439,257 @@ def export_pdf():
     body = request.get_json(force=True) or {}
     data = body.get("result")
     pdb_text = body.get("pdb_text") or ""
-
     if not data:
-        return jsonify({"ok": False, "error": "No analysis result supplied."}), 400
-
-    image_path = None
+        return jsonify({
+            "ok": False,
+            "error": "No analysis result supplied."
+        }), 400
 
     try:
         from reportlab.lib import colors
         from reportlab.lib.pagesizes import A4
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.styles import (
+            getSampleStyleSheet,
+            ParagraphStyle,
+        )
         from reportlab.platypus import (
-            SimpleDocTemplate, Paragraph, Spacer, Table, LongTable,
-            TableStyle, Image, PageBreak
+            SimpleDocTemplate,
+            Paragraph,
+            Spacer,
+            Table,
+            TableStyle,
+            Image,
+            PageBreak,
         )
         from reportlab.lib.units import mm
 
-        def safe(value):
-            return html.escape(str(value if value is not None else "—"))
+        def safe(v):
+            return html.escape(str(v if v is not None else "—"))
 
-        def fmt(value, digits=2, unit=""):
-            if value is None or value == "":
+        def fmt(v, digits=2, unit=""):
+            if v is None:
                 return "Not available"
             try:
-                return f"{float(value):.{digits}f}{unit}"
+                return f"{float(v):.{digits}f}{unit}"
             except (TypeError, ValueError):
-                return safe(value)
-
-        def list_text(value):
-            if value is None:
-                return "—"
-            if isinstance(value, (list, tuple, set)):
-                return ", ".join(str(x) for x in value) if value else "—"
-            return str(value)
-
-        def flatten(obj, path=""):
-            rows = []
-            if isinstance(obj, dict):
-                for key, value in obj.items():
-                    p = f"{path}.{key}" if path else str(key)
-                    if isinstance(value, (dict, list)):
-                        rows.extend(flatten(value, p))
-                    else:
-                        rows.append((p, value))
-            elif isinstance(obj, list):
-                for i, value in enumerate(obj):
-                    p = f"{path}[{i}]"
-                    if isinstance(value, (dict, list)):
-                        rows.extend(flatten(value, p))
-                    else:
-                        rows.append((p, value))
-            else:
-                rows.append((path or "value", obj))
-            return rows
-
-        def P(value, style):
-            return Paragraph(safe(value), style)
+                return safe(v)
 
         buf = io.BytesIO()
         doc = SimpleDocTemplate(
             buf,
             pagesize=A4,
-            rightMargin=13 * mm,
-            leftMargin=13 * mm,
-            topMargin=13 * mm,
-            bottomMargin=13 * mm,
-            title="PROTAC-GEO Complete Analysis Dossier",
+            rightMargin=16 * mm,
+            leftMargin=16 * mm,
+            topMargin=15 * mm,
+            bottomMargin=15 * mm,
+            title="PROTAC-GEO Structural Analysis Dossier",
             author="Rahul Thakur",
-            subject="Complete computational analysis report",
         )
 
         styles = getSampleStyleSheet()
-        title_style = ParagraphStyle(
-            "PGTitle", parent=styles["Title"], fontSize=20, leading=24,
-            textColor=colors.HexColor("#163a4b"), spaceAfter=4
+        title = ParagraphStyle(
+            "Title2",
+            parent=styles["Title"],
+            fontSize=19,
+            leading=22,
+            textColor=colors.HexColor("#17324d"),
+            spaceAfter=4,
         )
-        sub_style = ParagraphStyle(
-            "PGSub", parent=styles["Normal"], fontSize=9, leading=12,
-            textColor=colors.HexColor("#587083"), spaceAfter=8
+        sub = ParagraphStyle(
+            "Sub",
+            parent=styles["Normal"],
+            fontSize=9,
+            leading=12,
+            textColor=colors.HexColor("#4d6880"),
+            spaceAfter=10,
         )
-        h_style = ParagraphStyle(
-            "PGH", parent=styles["Heading1"], fontSize=13, leading=16,
-            textColor=colors.HexColor("#0c7f7b"), spaceBefore=9, spaceAfter=6
+        heading = ParagraphStyle(
+            "H",
+            parent=styles["Heading2"],
+            fontSize=11,
+            leading=14,
+            textColor=colors.HexColor("#0c7f7b"),
+            spaceBefore=8,
+            spaceAfter=5,
         )
-        h2_style = ParagraphStyle(
-            "PGH2", parent=styles["Heading2"], fontSize=9.5, leading=12,
-            textColor=colors.HexColor("#17324d"), spaceBefore=6, spaceAfter=4
+        body = ParagraphStyle(
+            "Body2",
+            parent=styles["BodyText"],
+            fontSize=8.7,
+            leading=12,
+            textColor=colors.HexColor("#253a4c"),
         )
-        body_style = ParagraphStyle(
-            "PGB", parent=styles["BodyText"], fontSize=7.8, leading=10.5,
-            textColor=colors.HexColor("#253b4c")
-        )
-        small_style = ParagraphStyle(
-            "PGSmall", parent=body_style, fontSize=6.7, leading=8.5
-        )
-        tiny_style = ParagraphStyle(
-            "PGTiny", parent=body_style, fontSize=5.6, leading=7
+        small = ParagraphStyle(
+            "Small",
+            parent=body,
+            fontSize=7.5,
+            leading=10,
         )
 
         mol = data.get("molecular") or {}
-        conf = data.get("conformers") or {}
         gm = data.get("geometry_metrics") or {}
         st = data.get("structure") or {}
         tg = st.get("ternary_geometry") or {}
-        e3_screen = data.get("e3_screen") or []
+        lig = gm.get("ligand_selected") or {}
         warnings = data.get("warnings") or []
-        ligand = gm.get("ligand_selected") or tg.get("ligand") or {}
-        ligand_candidates = st.get("ligand_candidates") or []
-        all_lysines = st.get("all_lysines") or st.get("nearest_lysines") or []
-        poi_res = tg.get("poi_interface_residues") or []
-        e3_res = tg.get("e3_interface_residues") or []
-        poi_pairs = (tg.get("poi_e3") or {}).get("pairs") or []
-        protac_poi_pairs = (tg.get("protac_poi") or {}).get("pairs") or []
-        protac_e3_pairs = (tg.get("protac_e3") or {}).get("pairs") or []
-        poi_hbonds = tg.get("protac_poi_hbond_like_pairs") or []
-        e3_hbonds = tg.get("protac_e3_hbond_like_pairs") or []
 
         story = [
-            Paragraph("PROTAC-GEO", title_style),
-            Paragraph("Complete Geometry-Aware Multimodal Computational Analysis Dossier", sub_style),
+            Paragraph("PROTAC-GEO", title),
             Paragraph(
-                "The report contains the available analysis results returned by the PROTAC-GEO backend. "
-                "Structural distances and contacts use coordinates actually present in the supplied PDB. "
-                "A PROTAC SMILES does not create an unobserved 3D pose.",
-                body_style,
+                "Geometry-Aware Multimodal Framework for PROTAC-Mediated "
+                "Degradation Analysis",
+                sub,
             ),
-            Spacer(1, 5),
         ]
 
-        # 1 Input/provenance
-        story.append(Paragraph("1. Analysis input and provenance", h_style))
         meta = [
-            ["Field", "Value"],
-            ["Developer", "Rahul Thakur"],
-            ["Generated", data.get("timestamp")],
-            ["Project", data.get("project")],
-            ["Target protein", data.get("target")],
-            ["Recruiter E3 ligase", data.get("e3_ligase")],
-            ["Structure source", data.get("structure_source")],
-            ["PDB ID", data.get("pdb_id") or "—"],
-            ["POI chain(s)", list_text(gm.get("poi_chains") or tg.get("poi_chains"))],
-            ["E3 chain(s)", list_text(gm.get("e3_chains") or tg.get("e3_chains"))],
-            ["PDB ligand", (
-                f'{ligand.get("resname")} {ligand.get("resseq")}:{ligand.get("chain")}'
-                if ligand else "Not selected"
+            [Paragraph("<b>Developer</b>", small), "Rahul Thakur"],
+            [Paragraph("<b>Generated</b>", small), safe(data.get("timestamp"))],
+            [Paragraph("<b>Target</b>", small), safe(data.get("target"))],
+            [Paragraph("<b>E3 ligase</b>", small), safe(data.get("e3_ligase"))],
+            [Paragraph("<b>Structure source</b>", small), safe(data.get("structure_source"))],
+            [Paragraph("<b>POI chains</b>", small), safe(", ".join(gm.get("poi_chains") or []))],
+            [Paragraph("<b>E3 chains</b>", small), safe(", ".join(gm.get("e3_chains") or []))],
+            [Paragraph("<b>PDB ligand</b>", small), safe(
+                f'{lig.get("resname", "")} {lig.get("resseq", "")}:{lig.get("chain", "")}'
+                if lig else "Not selected"
             )],
-            ["Contact cutoff", fmt(tg.get("cutoff_A"), 1, " Å")],
-            ["Accessible lysine radius", fmt((data.get("user_geometry") or {}).get("lysine_radius_A"), 1, " Å")],
-            ["Linker atoms input", (data.get("user_geometry") or {}).get("linker_atoms", "—")],
-            ["Linker flexibility input", (data.get("user_geometry") or {}).get("linker_flexibility", "—")],
-            ["PROTAC SMILES", data.get("smiles")],
+            [Paragraph("<b>PROTAC SMILES</b>", small), safe(data.get("smiles"))],
         ]
-        t = Table([[P(a,small_style),P(b,small_style)] for a,b in meta],
-                  colWidths=[48*mm,126*mm])
-        t.setStyle(TableStyle([
-            ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#163a4b")),
-            ("TEXTCOLOR",(0,0),(-1,0),colors.white),
-            ("GRID",(0,0),(-1,-1),0.3,colors.HexColor("#ccd9df")),
-            ("VALIGN",(0,0),(-1,-1),"TOP"),
-        ]))
-        story.append(t)
 
-        # 2 Molecular and conformers
-        story.append(Paragraph("2. Molecular chemistry analysis", h_style))
-        rows = [
-            ["Descriptor","Value"],
-            ["Molecular weight",fmt(mol.get("molecular_weight"),3," Da")],
-            ["LogP",fmt(mol.get("logP"),3)],
-            ["TPSA",fmt(mol.get("tpsa"),3," Å²")],
-            ["H-bond donors",mol.get("hbd","—")],
-            ["H-bond acceptors",mol.get("hba","—")],
-            ["Rings",mol.get("rings","—")],
-            ["Aromatic rings",mol.get("aromatic_rings","—")],
-            ["Heavy atoms",mol.get("heavy_atoms","—")],
-            ["Rotatable bonds",mol.get("rotatable_bonds","—")],
+        meta_table = Table(meta, colWidths=[38 * mm, 136 * mm])
+        meta_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#eef6f7")),
+            ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#bfd4dc")),
+            ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#dae4e8")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ]))
+        story += [meta_table, Spacer(1, 5)]
+
+        story.append(Paragraph("1. Molecular and screening overview", heading))
+        overview = [
+            ["Screening index", safe(data.get("screening_score"))],
+            ["Molecular weight", fmt(mol.get("molecular_weight"), 2, " Da")],
+            ["LogP", fmt(mol.get("logP"), 2)],
+            ["TPSA", fmt(mol.get("tpsa"), 2, " Å²")],
+            ["Rotatable bonds", safe(mol.get("rotatable_bonds"))],
+            ["Conformers", safe((data.get("conformers") or {}).get("conformer_count"))],
+            ["Accessible lysines", f'{safe(gm.get("accessible_lysines"))} / {safe(gm.get("total_lysines"))}'],
         ]
-        t=Table([[P(a,small_style),P(b,small_style)] for a,b in rows],
-                colWidths=[75*mm,99*mm],repeatRows=1)
-        t.setStyle(TableStyle([
-            ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#0c7f7b")),
-            ("TEXTCOLOR",(0,0),(-1,0),colors.white),
-            ("GRID",(0,0),(-1,-1),0.25,colors.HexColor("#cfd9df")),
+        tt = Table(overview, colWidths=[65 * mm, 109 * mm])
+        tt.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f5f8fa")),
+            ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd9df")),
+            ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#e0e7eb")),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
         ]))
-        story.append(t)
+        story.append(tt)
 
-        story.append(Paragraph("2.1 Conformer / flexibility output", h2_style))
-        rows=[["Metric","Value"]]
-        for k,v in conf.items():
-            rows.append([str(k),json.dumps(v,ensure_ascii=False,default=str) if isinstance(v,(dict,list)) else v])
-        if len(rows)==1:
-            rows.append(["No conformer output","—"])
-        t=Table([[P(a,small_style),P(b,small_style)] for a,b in rows],
-                colWidths=[75*mm,99*mm],repeatRows=1)
-        t.setStyle(TableStyle([
-            ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf3f7")),
-            ("GRID",(0,0),(-1,-1),0.2,colors.HexColor("#d6e1e6")),
-            ("VALIGN",(0,0),(-1,-1),"TOP"),
+        story.append(Paragraph("2. Ternary-complex coordinate geometry", heading))
+        geo_rows = [
+            ["Measurement", "Value"],
+            ["POI–E3 centroid distance", fmt(gm.get("poi_e3_centroid_distance_A"), 2, " Å")],
+            ["POI–E3 minimum atom distance", fmt(gm.get("poi_e3_min_distance_A"), 2, " Å")],
+            ["POI–E3 contacts ≤5 Å", safe(gm.get("poi_e3_contacts_5A"))],
+            ["PROTAC–POI minimum distance", fmt(gm.get("protac_poi_min_distance_A"), 2, " Å")],
+            ["PROTAC–E3 minimum distance", fmt(gm.get("protac_e3_min_distance_A"), 2, " Å")],
+            ["PROTAC–POI contacts ≤5 Å", safe(gm.get("protac_poi_contacts_5A"))],
+            ["PROTAC–E3 contacts ≤5 Å", safe(gm.get("protac_e3_contacts_5A"))],
+            ["POI interface residues", safe(gm.get("poi_interface_residues"))],
+            ["E3 interface residues", safe(gm.get("e3_interface_residues"))],
+            ["H-bond-like PROTAC–POI", safe(gm.get("protac_poi_hbond_like"))],
+            ["H-bond-like PROTAC–E3", safe(gm.get("protac_e3_hbond_like"))],
+        ]
+        gt = Table(geo_rows, colWidths=[88 * mm, 86 * mm], repeatRows=1)
+        gt.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0c7f7b")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#cfd9df")),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ]))
-        story.append(t)
-
-        # 3 Screening
-        story.append(Paragraph("3. Four-ligase screening matrix", h_style))
-        rows=[["E3 ligase","Compatibility index","Benchmark records","Target/E3 records"]]
-        for x in e3_screen:
-            rows.append([x.get("e3_ligase"),x.get("compatibility_index"),
-                         x.get("benchmark_records"),x.get("target_e3_records")])
-        if len(rows)==1:
-            rows.append(["No rows returned","—","—","—"])
-        t=Table([[P(a,small_style) for a in row] for row in rows],
-                colWidths=[42*mm,43*mm,42*mm,47*mm],repeatRows=1)
-        t.setStyle(TableStyle([
-            ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#0c7f7b")),
-            ("TEXTCOLOR",(0,0),(-1,0),colors.white),
-            ("GRID",(0,0),(-1,-1),0.25,colors.HexColor("#cfd9df")),
-            ("ALIGN",(1,1),(-1,-1),"CENTER"),
-        ]))
-        story.append(t)
+        story.append(gt)
+        story.append(Spacer(1, 5))
         story.append(Paragraph(
-            f"Screening index: {safe(data.get('screening_score'))}. This is not an experimentally calibrated DC50/Dmax prediction.",
-            small_style
+            safe(gm.get("geometry_note")),
+            small,
         ))
 
-        # 4 Ternary
-        story.append(Paragraph("4. Ternary-complex geometry", h_style))
-        rows=[
-            ["Measurement","Value"],
-            ["POI–E3 centroid distance",fmt(gm.get("poi_e3_centroid_distance_A"),3," Å")],
-            ["POI–E3 minimum atom distance",fmt(gm.get("poi_e3_min_distance_A"),3," Å")],
-            ["POI–E3 contacts",gm.get("poi_e3_contacts_5A","—")],
-            ["PROTAC–POI minimum distance",fmt(gm.get("protac_poi_min_distance_A"),3," Å")],
-            ["PROTAC–E3 minimum distance",fmt(gm.get("protac_e3_min_distance_A"),3," Å")],
-            ["PROTAC–POI contacts",gm.get("protac_poi_contacts_5A","—")],
-            ["PROTAC–E3 contacts",gm.get("protac_e3_contacts_5A","—")],
-            ["POI interface residues",gm.get("poi_interface_residues","—")],
-            ["E3 interface residues",gm.get("e3_interface_residues","—")],
-            ["PROTAC–POI H-bond-like contacts",gm.get("protac_poi_hbond_like","—")],
-            ["PROTAC–E3 H-bond-like contacts",gm.get("protac_e3_hbond_like","—")],
-            ["Geometry available",gm.get("geometry_available","—")],
-        ]
-        t=Table([[P(a,small_style),P(b,small_style)] for a,b in rows],
-                colWidths=[105*mm,69*mm],repeatRows=1)
-        t.setStyle(TableStyle([
-            ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#0c7f7b")),
-            ("TEXTCOLOR",(0,0),(-1,0),colors.white),
-            ("GRID",(0,0),(-1,-1),0.25,colors.HexColor("#cfd9df")),
-        ]))
-        story.append(t)
+        story.append(Paragraph("3. Interface residues", heading))
+        poi_res = tg.get("poi_interface_residues") or []
+        e3_res = tg.get("e3_interface_residues") or []
 
-        # 5 ligand candidates
-        story.append(Paragraph("5. PDB ligand / HET candidates", h_style))
-        rows=[["HET code","Chain","Residue","Atoms","Heavy atoms"]]
-        for x in ligand_candidates:
-            rows.append([x.get("resname"),x.get("chain") or "_",x.get("resseq"),x.get("atom_count"),x.get("heavy_atoms")])
-        if len(rows)==1: rows.append(["None","—","—","—","—"])
-        t=Table([[P(a,small_style) for a in row] for row in rows],
-                colWidths=[35*mm,25*mm,30*mm,35*mm,49*mm],repeatRows=1)
-        t.setStyle(TableStyle([
-            ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf3f7")),
-            ("GRID",(0,0),(-1,-1),0.2,colors.HexColor("#d6e1e6")),
-        ]))
-        story.append(t)
-
-        # 6 interfaces
-        story.append(Paragraph("6. Interface residues", h_style))
-        rows=[["POI residue","Min distance","E3 residue","Min distance"]]
-        n=max(len(poi_res),len(e3_res),1)
+        residue_rows = [["POI residue", "Min distance", "E3 residue", "Min distance"]]
+        n = max(len(poi_res), len(e3_res), 1)
         for i in range(n):
-            p=poi_res[i] if i<len(poi_res) else {}
-            e=e3_res[i] if i<len(e3_res) else {}
-            rows.append([p.get("label","—"),fmt(p.get("min_distance_A"),3," Å"),
-                         e.get("label","—"),fmt(e.get("min_distance_A"),3," Å")])
-        t=LongTable([[P(a,small_style) for a in row] for row in rows],
-                    colWidths=[48*mm,39*mm,48*mm,39*mm],repeatRows=1)
-        t.setStyle(TableStyle([
-            ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#e9f4f5")),
-            ("GRID",(0,0),(-1,-1),0.2,colors.HexColor("#d7e2e7")),
-        ]))
-        story.append(t)
-
-        # 7 H-bond details
-        story.append(Paragraph("7. H-bond-like contact details", h_style))
-        for name,pairs in [
-            ("PROTAC–POI H-bond-like contacts",poi_hbonds),
-            ("PROTAC–E3 H-bond-like contacts",e3_hbonds),
-        ]:
-            story.append(Paragraph(name,h2_style))
-            rows=[["PROTAC atom","Protein atom","Protein residue","Distance"]]
-            for x in pairs:
-                rows.append([x.get("protac_atom"),x.get("protein_atom"),
-                             x.get("protein_residue"),fmt(x.get("distance_A"),3," Å")])
-            if len(rows)==1: rows.append(["None","—","—","—"])
-            t=LongTable([[P(a,small_style) for a in row] for row in rows],
-                        colWidths=[35*mm,35*mm,68*mm,36*mm],repeatRows=1)
-            t.setStyle(TableStyle([
-                ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#f1f7f8")),
-                ("GRID",(0,0),(-1,-1),0.18,colors.HexColor("#d8e3e7")),
-            ]))
-            story.append(t)
-
-        # 8 Lysines
-        story.append(PageBreak())
-        story.append(Paragraph("8. Lysine / ubiquitination-geometry analysis", h_style))
-        story.append(Paragraph(
-            "Accessible lysines use a packing-neighborhood proxy. This is not SASA and not a direct ubiquitination or degradation prediction.",
-            body_style
-        ))
-        rows=[["Residue","Chain","Neighbors","Accessible proxy","NZ–PROTAC min","Ligand centroid"]]
-        for x in all_lysines:
-            rows.append([
-                x.get("label"), x.get("chain"), x.get("neighbor_count"),
-                "Yes" if x.get("accessible_proxy") else "No",
-                fmt(x.get("min_protac_NZ_distance_A"),3," Å") if x.get("min_protac_NZ_distance_A") is not None else "—",
-                fmt(x.get("ligand_centroid_distance_A"),3," Å") if x.get("ligand_centroid_distance_A") is not None else "—"
+            p = poi_res[i] if i < len(poi_res) else {}
+            e = e3_res[i] if i < len(e3_res) else {}
+            residue_rows.append([
+                safe(p.get("label")),
+                fmt(p.get("min_distance_A"), 2, " Å"),
+                safe(e.get("label")),
+                fmt(e.get("min_distance_A"), 2, " Å"),
             ])
-        if len(rows)==1: rows.append(["No lysines returned","—","—","—","—","—"])
-        t=LongTable([[P(a,small_style) for a in row] for row in rows],
-                    colWidths=[34*mm,20*mm,28*mm,31*mm,31*mm,30*mm],repeatRows=1)
-        t.setStyle(TableStyle([
-            ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#0c7f7b")),
-            ("TEXTCOLOR",(0,0),(-1,0),colors.white),
-            ("GRID",(0,0),(-1,-1),0.18,colors.HexColor("#d0dce1")),
+
+        rt = Table(residue_rows, colWidths=[48 * mm, 38 * mm, 48 * mm, 38 * mm], repeatRows=1)
+        rt.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e9f4f5")),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#d7e2e7")),
+            ("FONTSIZE", (0, 0), (-1, -1), 7.5),
         ]))
-        story.append(t)
+        story.append(rt)
 
-        # 9 detailed atom pairs
-        story.append(Paragraph("9. Detailed atom-contact pairs", h_style))
-        for name,pairs in [
-            ("POI–E3 contacts",poi_pairs),
-            ("PROTAC–POI contacts",protac_poi_pairs),
-            ("PROTAC–E3 contacts",protac_e3_pairs),
-        ]:
-            story.append(Paragraph(name,h2_style))
-            rows=[["Atom A","Residue A","Atom B","Residue B","Distance"]]
-            for x in pairs:
-                rows.append([
-                    x.get("a_atom"),x.get("a_residue"),x.get("b_atom"),
-                    x.get("b_residue"),fmt(x.get("distance_A"),3," Å")
-                ])
-            if len(rows)==1: rows.append(["None","—","—","—","—"])
-            t=LongTable([[P(a,tiny_style) for a in row] for row in rows],
-                        colWidths=[23*mm,46*mm,23*mm,46*mm,36*mm],repeatRows=1)
-            t.setStyle(TableStyle([
-                ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf3f7")),
-                ("GRID",(0,0),(-1,-1),0.12,colors.HexColor("#d3dee3")),
-            ]))
-            story.append(t)
-
-        # 10 structure snapshot
-        if pdb_text and st:
-            story.append(PageBreak())
-            story.append(Paragraph("10. Structural coordinate snapshot", h_style))
-            image_path = os.path.join(
+        if pdb_text and data.get("structure"):
+            story.append(Paragraph("4. Structural analysis snapshot", heading))
+            imgpath = os.path.join(
                 tempfile.gettempdir(),
                 "protac_geo_snapshot_" + uuid.uuid4().hex + ".png",
             )
-            if structure_snapshot_png(pdb_text, image_path):
-                story.append(Image(image_path, width=174*mm, height=94*mm))
-                story.append(Paragraph(
-                    "Coordinate projection of the supplied PDB; not a molecular surface.",
-                    small_style
-                ))
+            if structure_snapshot_png(pdb_text, imgpath):
+                story.append(
+                    Image(imgpath, width=174 * mm, height=94 * mm)
+                )
+                try:
+                    os.remove(imgpath)
+                except OSError:
+                    pass
 
-        # 11 other fields
-        story.append(Paragraph("11. Sequence features and additional analysis", h_style))
-        for key in ("target_sequence","e3_sequence","user_geometry"):
-            value=data.get(key)
-            if value is None: continue
-            story.append(Paragraph(key.replace("_"," ").title(),h2_style))
-            rows=[["Field","Value"]]
-            for k,v in flatten(value):
-                rows.append([k, json.dumps(v,ensure_ascii=False,default=str) if isinstance(v,(dict,list)) else v])
-            if len(rows)==1: rows.append(["Value","—"])
-            t=LongTable([[P(a,small_style),P(b,small_style)] for a,b in rows],
-                        colWidths=[70*mm,104*mm],repeatRows=1)
-            t.setStyle(TableStyle([
-                ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf3f7")),
-                ("GRID",(0,0),(-1,-1),0.18,colors.HexColor("#d6e1e6")),
-            ]))
-            story.append(t)
-
-        # 12 interpretation and warnings
-        story.append(Paragraph("12. Interpretation, warnings and reproducibility", h_style))
-        story.append(Paragraph(safe(data.get("interpretation")),body_style))
-        for w in warnings:
-            story.append(Paragraph("• "+safe(w),small_style))
-        story.append(Paragraph("Reproducibility",h2_style))
-        story.append(Paragraph(
-            "RDKit molecular descriptors and conformer calculations; PDB coordinate parsing; "
-            "explicit POI/E3/ligand selection where supplied; coordinate-derived distances/contact "
-            "counts; packing-neighborhood lysine proxy; transparent E3-panel screening index. "
-            "No experimentally calibrated DC50/Dmax values are produced.",
-            body_style
-        ))
-
-        # 13 complete returned result payload
-        story.append(PageBreak())
-        story.append(Paragraph("13. Complete analysis-data appendix", h_style))
-        story.append(Paragraph(
-            "Every scalar/list/dictionary field returned in the analysis result is listed below.",
-            body_style
-        ))
-        rows=[["Field","Value"]]
-        for field,value in flatten(data):
-            if isinstance(value,float):
-                value_text=f"{value:.10g}"
-            else:
-                value_text=str(value)
-            rows.append([field,value_text])
-        # Complete field/value table.
-        t=LongTable(
-            [[P(a,tiny_style),P(b,tiny_style)] for a,b in rows],
-            colWidths=[67*mm,107*mm],
-            repeatRows=1,
+        story.append(Paragraph("5. Interpretation and limitations", heading))
+        story.append(
+            Paragraph(safe(data.get("interpretation")), body)
         )
-        t.setStyle(TableStyle([
-            ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#163a4b")),
-            ("TEXTCOLOR",(0,0),(-1,0),colors.white),
-            ("GRID",(0,0),(-1,-1),0.1,colors.HexColor("#d4dfe4")),
-            ("VALIGN",(0,0),(-1,-1),"TOP"),
-        ]))
-        story.append(t)
+        for warning in warnings:
+            story.append(
+                Paragraph("• " + safe(warning), small)
+            )
 
-        # IMPORTANT: ReportLab reads the image during build. Only remove it after build.
+        story.append(Spacer(1, 6))
+        story.append(Paragraph("6. Reproducibility", heading))
+        story.append(
+            Paragraph(
+                safe(
+                    "RDKit molecular descriptors and conformer calculations; "
+                    "PDB coordinate parsing with explicit chain/ligand selection; "
+                    "coordinate-derived POI/E3 and PROTAC interface distances; "
+                    "packing-neighborhood lysine exposure proxy; transparent "
+                    "four-ligase benchmark panel. No experimentally calibrated "
+                    "DC50/Dmax values are generated by this release."
+                ),
+                body,
+            )
+        )
+
         doc.build(story)
-
-        if image_path and os.path.exists(image_path):
-            try:
-                os.remove(image_path)
-            except OSError:
-                pass
-
         buf.seek(0)
         return send_file(
             buf,
             mimetype="application/pdf",
             as_attachment=True,
-            download_name="PROTAC-GEO_Complete_Analysis_Dossier.pdf",
+            download_name="PROTAC-GEO_Structural_Analysis_Dossier.pdf",
         )
 
     except Exception as e:
-        if image_path and os.path.exists(image_path):
-            try:
-                os.remove(image_path)
-            except OSError:
-                pass
         return jsonify({"ok": False, "error": str(e)}), 400
 
 
@@ -892,4 +697,4 @@ if __name__ == "__main__":
     print("PROTAC-GEO local web application")
     print("Developer: Rahul Thakur")
     print("Open: http://127.0.0.1:5000")
-    app.run(host="127.0.0.1", port=5000, debug=False)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "10000")), debug=False)
