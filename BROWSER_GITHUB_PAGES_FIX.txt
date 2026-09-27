@@ -1,0 +1,34 @@
+PROTAC-GEO browser-first GitHub Pages fix
+
+Replace these files in your existing PROTAC-GEO repository:
+
+1. index.html
+2. browser_app.js
+
+Optional/synchronization:
+3. webapp/index.html
+4. webapp/browser_app.js
+
+This version does NOT call Render, Flask, /api/analyze, /api/upload-pdb, or /api/export-pdf
+for the public GitHub Pages application.
+
+Browser-side components:
+- 3Dmol.js for 3D structure visualization
+- RDKit.js for molecular descriptors
+- RCSB PDB direct download for PDB IDs
+- local JavaScript PDB/lysine/ternary geometry calculations
+- jsPDF for browser PDF export
+
+Important:
+- The screening index is a transparent chemistry screening index, NOT a degradation probability.
+- No validated DC50/Dmax/degradation model is fabricated.
+- Lysine exposure is a packing-neighborhood proxy, not SASA or ubiquitination probability.
+- For ternary geometry, verify POI chain(s), E3 chain(s), and exact PDB PROTAC HET code.
+- The existing Python backend files are intentionally preserved in the project for local/research use.
+
+After replacing the files:
+git add .
+git commit -m "Move PROTAC-GEO public analysis to browser-first architecture"
+git push origin main
+
+Then hard-refresh the GitHub Pages site.

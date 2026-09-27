@@ -1,0 +1,11 @@
+PROJECT: PROTAC-GEO
+TITLE: PROTAC-GEO: A Geometry-Aware Multimodal Deep Learning Framework for Predicting PROTAC-Mediated Protein Degradation
+DEVELOPER: Rahul Thakur
+VERSION: 4.0 - functional single-page analysis platform
+FRONTEND: Single-page HTML/CSS/JavaScript + 3Dmol.js
+BACKEND: Flask
+CHEMISTRY: RDKit
+STRUCTURES: RCSB PDB download or local PDB upload
+REPORTING: ReportLab PDF dossier
+
+IMPORTANT: The web app reports calculated measurements and transparent screening indices. It intentionally does not claim experimentally validated DC50/Dmax values without a trained and independently evaluated model.

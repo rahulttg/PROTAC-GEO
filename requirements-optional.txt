@@ -1,0 +1,6 @@
+# Optional ESM-2 / protein-language-model stack
+fair-esm>=2.0.0
+transformers>=4.40
+safetensors>=0.4
+# Optional solvent-accessibility tools
+# freesasa
