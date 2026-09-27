@@ -666,6 +666,25 @@
     }
   }
 
+  function captureViewerImage() {
+    try {
+      if (!viewer) return null;
+      if (typeof viewer.render === "function") viewer.render();
+      if (typeof viewer.pngURI === "function") {
+        const uri = viewer.pngURI();
+        if (uri && uri.startsWith("data:image")) return uri;
+      }
+      const canvas = viewer.getCanvas ? viewer.getCanvas() : null;
+      if (canvas && typeof canvas.toDataURL === "function") return canvas.toDataURL("image/png");
+      const host = $("viewer");
+      const c = host ? host.querySelector("canvas") : null;
+      if (c && typeof c.toDataURL === "function") return c.toDataURL("image/png");
+    } catch (e) {
+      console.warn("Could not capture 3D structure screenshot:", e);
+    }
+    return null;
+  }
+
   function exportPdf() {
     if (!currentResult) {
       setStatus("Run the analysis first, then export the dossier.","error");
@@ -678,41 +697,307 @@
 
     const {jsPDF}=window.jspdf;
     const doc=new jsPDF({unit:"mm",format:"a4"});
-    const r=currentResult, m=r.molecular||{}, g=r.geometry_metrics||{}, t=r.structure?.ternary_geometry||{};
-    let y=18;
-    const line=(txt,size=9,space=5)=>{
+    const r=currentResult || {};
+    const m=r.molecular || {};
+    const g=r.geometry_metrics || {};
+    const t=r.structure?.ternary_geometry || r.ternary_geometry || {};
+    const summary=t.summary || {};
+    const screen=Array.isArray(r.e3_screen) ? r.e3_screen : [];
+    const warnings=Array.isArray(t.warnings) ? t.warnings : [];
+    const poiResidues=Array.isArray(t.poi_residues) ? t.poi_residues : [];
+    const e3Residues=Array.isArray(t.e3_residues) ? t.e3_residues : [];
+    const lysRows=Array.isArray(r.structure?.lys?.rows) ? r.structure.lys.rows : [];
+    const candidates=Array.isArray(r.structure?.ligand_candidates) ? r.structure.ligand_candidates : [];
+
+    let y=16;
+    const pageBottom=279;
+    const left=14;
+    const right=196;
+    const usable=right-left;
+
+    function ensure(h=8) {
+      if (y+h > pageBottom) {
+        doc.addPage();
+        y=16;
+        return true;
+      }
+      return false;
+    }
+
+    function section(title) {
+      ensure(12);
+      doc.setFillColor(235,247,247);
+      doc.roundedRect(left,y-5,usable,9,2,2,"F");
+      doc.setTextColor(12,127,123);
+      doc.setFontSize(12);
+      doc.setFont(undefined,"bold");
+      doc.text(title,left+3,y+1);
+      doc.setTextColor(35,48,60);
+      y+=10;
+    }
+
+    function line(text,size=8.5,space=4) {
+      doc.setFont(undefined,"normal");
       doc.setFontSize(size);
-      const lines=doc.splitTextToSize(String(txt),178);
-      doc.text(lines,16,y);
-      y+=lines.length*4+space;
-      if(y>275){doc.addPage();y=18;}
-    };
+      doc.setTextColor(35,48,60);
+      const lines=doc.splitTextToSize(String(text ?? "—"),usable);
+      for (const ln of lines) {
+        ensure(5);
+        doc.text(ln,left,y);
+        y+=3.8;
+      }
+      y+=space;
+    }
 
-    doc.setFontSize(20); doc.text("PROTAC-GEO",16,y); y+=8;
-    line("Geometry-aware browser analysis dossier",10,7);
-    line(`Developer: Rahul Thakur`,9,3);
-    line(`Generated: ${r.timestamp}`,9,3);
-    line(`Target: ${r.target} | E3: ${r.e3_ligase}`,9,3);
-    line(`Screening index: ${r.screening_score} (not a degradation probability)`,9,6);
+    function boldLine(label,value,space=3) {
+      ensure(6);
+      doc.setFontSize(8.5);
+      doc.setFont(undefined,"bold");
+      doc.setTextColor(23,50,77);
+      doc.text(String(label),left,y);
+      const lw=doc.getTextWidth(String(label))+2;
+      doc.setFont(undefined,"normal");
+      doc.setTextColor(35,48,60);
+      const lines=doc.splitTextToSize(String(value ?? "—"),usable-lw);
+      doc.text(lines,left+lw,y);
+      y+=Math.max(4,lines.length*3.8)+space;
+    }
 
-    line("Molecular profile",12,4);
-    line(`MW ${fmt(m.molecular_weight,2)} Da | LogP ${fmt(m.logP,2)} | TPSA ${fmt(m.tpsa,2)}`,9,3);
-    line(`HBD/HBA ${m.hbd??"—"}/${m.hba??"—"} | Rings ${m.rings??"—"} | Aromatic rings ${m.aromatic_rings??"—"}`,9,3);
-    line(`Heavy atoms ${m.heavy_atoms??"—"} | Rotatable bonds ${m.rotatable_bonds??"—"}`,9,6);
+    function table(headers, rows, widths) {
+      const rowH=6.2;
+      const headerH=7;
+      const cols=headers.length;
+      const ws=widths || Array(cols).fill(usable/cols);
+      function drawRow(values,isHeader=false) {
+        let maxLines=1;
+        const wrapped=values.map((v,i)=>{
+          doc.setFontSize(isHeader?7.2:7.1);
+          return doc.splitTextToSize(String(v ?? "—"),Math.max(8,ws[i]-3));
+        });
+        maxLines=Math.max(...wrapped.map(a=>a.length));
+        const h=(isHeader?headerH:rowH*maxLines);
+        if (y+h>pageBottom) {
+          doc.addPage(); y=16;
+          drawRow(headers,true);
+        }
+        let x=left;
+        for (let i=0;i<cols;i++) {
+          doc.setFillColor(isHeader?226:255,isHeader?241:255,isHeader?242:255);
+          doc.setDrawColor(210,222,230);
+          doc.rect(x,y,ws[i],h,"FD");
+          doc.setTextColor(isHeader?23:45,isHeader?55:65,isHeader?77:78);
+          doc.setFont(undefined,isHeader?"bold":"normal");
+          doc.setFontSize(isHeader?7.2:7.1);
+          doc.text(wrapped[i],x+1.5,y+(isHeader?4.6:4.2));
+          x+=ws[i];
+        }
+        y+=h;
+      }
+      drawRow(headers,true);
+      rows.forEach(row=>drawRow(row,false));
+      y+=4;
+    }
 
-    line("Structural geometry",12,4);
-    line(`Total lysines ${g.total_lysines??"—"} | Accessible proxy ${g.accessible_lysines??"—"}`,9,3);
-    line(`Nearest lysine distance ${g.nearest_lysine_distance_A==null?"—":fmt(g.nearest_lysine_distance_A,2)+" Å"}`,9,3);
-    line(`POI-E3 centroid distance ${t.summary?.poi_e3_centroid_distance_A==null?"—":fmt(t.summary.poi_e3_centroid_distance_A,2)+" Å"}`,9,3);
-    line(`PROTAC-POI minimum ${t.summary?.protac_poi_min_distance_A==null?"—":fmt(t.summary.protac_poi_min_distance_A,2)+" Å"}`,9,3);
-    line(`PROTAC-E3 minimum ${t.summary?.protac_e3_min_distance_A==null?"—":fmt(t.summary.protac_e3_min_distance_A,2)+" Å"}`,9,6);
+    // Cover / overview
+    doc.setTextColor(23,50,77);
+    doc.setFont(undefined,"bold");
+    doc.setFontSize(21);
+    doc.text("PROTAC-GEO",left,y); y+=8;
+    doc.setFont(undefined,"normal");
+    doc.setFontSize(10);
+    doc.setTextColor(76,104,128);
+    line("Geometry-Aware Multimodal Deep Learning Framework for PROTAC-Mediated Protein Degradation Analysis",10,5);
+    boldLine("Developer:","Rahul Thakur",2);
+    boldLine("Generated:",r.timestamp,2);
+    boldLine("Target protein:",r.target,2);
+    boldLine("Recruited E3 ligase:",r.e3_ligase,2);
+    boldLine("PROTAC SMILES:",r.smiles,3);
+    boldLine("Model status:","No validated degradation model loaded",2);
+    boldLine("Prediction status:","screening_index_only — the screening index is not DC50, Dmax, degradation probability, or experimental efficacy.",5);
 
-    line("Reproducibility notes",12,4);
-    line("All PDB coordinate measurements in this public build were calculated locally in the browser from the supplied coordinates. Lysine exposure is a packing-neighborhood proxy, not SASA or ubiquitination probability.",9,4);
-    line("No validated degradation model is loaded. The screening index must not be interpreted as DC50, Dmax, degradation probability, or experimental efficacy.",9,4);
+    // 1. Degradation & screening analysis
+    section("1. Degradation & screening analysis");
+    table(
+      ["Metric","Value","Interpretation / source"],
+      [
+        ["PROTAC-GEO screening index",fmt(r.screening_score,1),"Transparent browser chemistry index; not a degradation probability."],
+        ["Accessible lysines",g.accessible_lysines!=null?`${g.accessible_lysines} / ${g.total_lysines??"—"}`:"—","Packing-neighborhood accessibility proxy."],
+        ["PROTAC–POI minimum distance",summary.protac_poi_min_distance_A!=null?fmt(summary.protac_poi_min_distance_A)+" Å":"—","Measured from supplied PDB ligand coordinates."],
+        ["PROTAC–E3 minimum distance",summary.protac_e3_min_distance_A!=null?fmt(summary.protac_e3_min_distance_A)+" Å":"—","Measured from supplied PDB ligand coordinates."],
+        ["Molecular weight",m.molecular_weight!=null?fmt(m.molecular_weight,2)+" Da":"—","RDKit.js descriptor."],
+        ["Rotatable bonds",m.rotatable_bonds??"—","RDKit.js descriptor."],
+        ["Conformer count",m._browser_conformers??"—","Available conformers in the browser RDKit object."],
+        ["PDB structure",r.pdb_id?`RCSB ${r.pdb_id}`:(pdbText?"Uploaded PDB":"Not supplied"),"Coordinate source used for structural analysis."],
+        ["Ligand selected",r.structure?.ligand_selected?`${r.structure.ligand_selected.resname} (${r.structure.ligand_selected.chain||"_"}:${r.structure.ligand_selected.resseq})`:"—","PDB ligand selected for geometry."],
+        ["POI chains",(t.poi_chains||[]).join(", ")||"—","User-specified or conservative inferred assignment."],
+        ["E3 chains",(t.e3_chains||[]).join(", ")||"—","User-specified or inferred assignment."],
+      ],
+      [47,35,100]
+    );
 
-    doc.save("PROTAC-GEO_Browser_Analysis_Dossier.pdf");
-    setStatus("Browser PDF dossier generated and downloaded.","ok");
+    // 2. 4-ligase screening matrix
+    section("2. 4-ligase screening matrix");
+    table(
+      ["E3 ligase","Index","Benchmark records","Target/E3 records","Status"],
+      screen.map(x=>[
+        x.e3_ligase,
+        fmt(x.compatibility_index,1),
+        x.benchmark_records??0,
+        x.target_e3_records??0,
+        x.basis || "Chemistry only"
+      ]),
+      [28,22,34,34,64]
+    );
+    line("Important: all four entries in this browser build use the same transparent chemistry index because an E3-specific validated degradation model is not loaded. The matrix is therefore a screening aid, not an experimental efficacy ranking.",8,5);
+
+    // 3. Ternary-complex geometry
+    section("3. Ternary-complex geometry");
+    table(
+      ["Geometry metric","Value"],
+      [
+        ["POI–E3 centroid distance",summary.poi_e3_centroid_distance_A!=null?fmt(summary.poi_e3_centroid_distance_A)+" Å":"—"],
+        ["POI–E3 minimum atom distance",summary.poi_e3_min_distance_A!=null?fmt(summary.poi_e3_min_distance_A)+" Å":"—"],
+        ["POI–E3 contacts",summary.poi_e3_contacts??"—"],
+        ["PROTAC–POI minimum distance",summary.protac_poi_min_distance_A!=null?fmt(summary.protac_poi_min_distance_A)+" Å":"—"],
+        ["PROTAC–E3 minimum distance",summary.protac_e3_min_distance_A!=null?fmt(summary.protac_e3_min_distance_A)+" Å":"—"],
+        ["PROTAC–POI contacts",summary.protac_poi_contacts??"—"],
+        ["PROTAC–E3 contacts",summary.protac_e3_contacts??"—"],
+        ["Contact cutoff",$("cutoff")?$("cutoff").value+" Å":"—"],
+      ],
+      [76,106]
+    );
+
+    if (r.structure?.ligand_selected) {
+      boldLine("Selected ligand:",`${r.structure.ligand_selected.resname} | chain ${r.structure.ligand_selected.chain||"_"} | residue ${r.structure.ligand_selected.resseq} | ${r.structure.ligand_selected.atom_count??"—"} atoms`,2);
+    }
+    if (candidates.length) {
+      line("PDB ligand candidates:",8.5,2);
+      table(["HET code","Chain","Residue","Atoms"],candidates.map(x=>[x.resname,x.chain||"_",x.resseq,x.atom_count]),[42,38,45,37]);
+    }
+
+    line(`POI interface residues (${poiResidues.length}):`,8.5,2);
+    if (poiResidues.length) {
+      table(["POI residue","Minimum distance"],poiResidues.map(x=>[x.label,fmt(x.min_distance_A)+" Å"]),[110,52]);
+    } else line("None within the selected contact cutoff.",8,3);
+
+    line(`E3 interface residues (${e3Residues.length}):`,8.5,2);
+    if (e3Residues.length) {
+      table(["E3 residue","Minimum distance"],e3Residues.map(x=>[x.label,fmt(x.min_distance_A)+" Å"]),[110,52]);
+    } else line("None within the selected contact cutoff.",8,3);
+
+    if (warnings.length) {
+      line("Geometry warnings:",8.5,2);
+      warnings.forEach(w=>line("• "+w,8,2));
+    }
+
+    // 4. Molecular profile
+    section("4. Molecular profile");
+    table(
+      ["Property","Value","Source / note"],
+      [
+        ["Molecular weight",m.molecular_weight!=null?fmt(m.molecular_weight,2)+" Da":"—","RDKit.js"],
+        ["LogP",m.logP!=null?fmt(m.logP,2):"—","RDKit.js Crippen descriptor"],
+        ["TPSA",m.tpsa!=null?fmt(m.tpsa,2):"—","RDKit.js"],
+        ["H-bond donors",m.hbd??"—","RDKit.js"],
+        ["H-bond acceptors",m.hba??"—","RDKit.js"],
+        ["Rings",m.rings??"—","RDKit.js"],
+        ["Aromatic rings",m.aromatic_rings??"—","RDKit.js"],
+        ["Heavy atoms",m.heavy_atoms??"—","RDKit.js"],
+        ["Rotatable bonds",m.rotatable_bonds??"—","RDKit.js"],
+        ["Descriptor source",m._descriptor_source||"—","Browser chemistry engine"],
+      ],
+      [55,42,91]
+    );
+
+    // 5. Linker & conformer analysis
+    section("5. Linker & conformer analysis");
+    const linkerEl=$("linker"), flexEl=$("flex");
+    table(
+      ["Parameter","Value","Interpretation / note"],
+      [
+        ["Estimated linker / rotatable-bond proxy",m.rotatable_bonds!=null?`${m.rotatable_bonds} rotatable bonds`:"—","Current browser UI proxy."],
+        ["Conformers generated / available",m._browser_conformers??"—","RDKit.js conformer count available in browser."],
+        ["MMFF energy spread","Not generated in browser","No MMFF energy calculation is claimed in this public browser build."],
+        ["Flexibility proxy",m.rotatable_bonds!=null?Math.min(1,Number(m.rotatable_bonds)/20).toFixed(3):"—","Bounded rotatable-bond proxy."],
+        ["Linker slider value",linkerEl?linkerEl.value:"—","User interface input."],
+        ["Flexibility slider value",flexEl?flexEl.value:"—","User interface input."],
+      ],
+      [60,43,85]
+    );
+
+    // 6. Ubiquitination / lysine geometry
+    section("6. Ubiquitination / lysine geometry");
+    table(
+      ["Parameter","Value"],
+      [
+        ["Total lysines",g.total_lysines??"—"],
+        ["Exposed lysine proxy",g.accessible_lysines??"—"],
+        ["Accessible lysine radius",$("radius")?$("radius").value+" Å":"—"],
+        ["Nearest lysine",g.nearest_lysine?`${g.nearest_lysine.chain}:${g.nearest_lysine.residue}`:"—"],
+        ["Nearest NZ–PROTAC distance",g.nearest_lysine_distance_A!=null?fmt(g.nearest_lysine_distance_A)+" Å":"—"],
+        ["POI–E3 centroid distance",summary.poi_e3_centroid_distance_A!=null?fmt(summary.poi_e3_centroid_distance_A)+" Å":"—"],
+      ],
+      [76,106]
+    );
+    if (lysRows.length) {
+      line(`Lysine accessibility rows (${lysRows.length}):`,8.5,2);
+      table(
+        ["Residue","Chain","NZ neighbors","Exposed proxy"],
+        lysRows.map(x=>[x.residue,x.chain||"_",x.nz_neighbors,x.exposed_proxy?"Yes":"No"]),
+        [67,32,42,41]
+      );
+    }
+    line("Scientific interpretation: lysine exposure here is a packing-neighborhood proxy derived from supplied coordinates. It is not SASA, ubiquitination probability, degradation probability, or experimental activity.",8,5);
+
+    // Optional sequence information
+    if (r.target_sequence || r.e3_sequence) {
+      section("Additional input data");
+      if (r.target_sequence) line(`Target sequence supplied: ${r.target_sequence}`,7.5,3);
+      if (r.e3_sequence) line(`E3 sequence supplied: ${r.e3_sequence}`,7.5,4);
+    }
+
+    // Protein screenshot
+    if (pdbText) {
+      const shot=captureViewerImage();
+      if (shot) {
+        doc.addPage();
+        y=16;
+        section("Uploaded / analyzed protein structure — 3D screenshot");
+        line(r.pdb_id?`Structure: RCSB PDB ${r.pdb_id}`:"Structure: uploaded PDB file",8.5,3);
+        line(`Atoms parsed: ${r.structure?.atom_count??"—"} | Chains: ${(r.structure?.chains||[]).join(", ")||"—"}`,8.5,5);
+        try {
+          const pageW=usable;
+          const maxH=145;
+          const imgW=pageW;
+          const imgH=Math.min(maxH,imgW*0.62);
+          doc.addImage(shot,"PNG",left,y,imgW,imgH,undefined,"FAST");
+          y+=imgH+8;
+        } catch(e) {
+          line("A 3D screenshot was available in the viewer but could not be embedded in the PDF.",8,4);
+        }
+        line("Screenshot source: the browser-rendered 3Dmol.js viewer using the supplied PDB coordinates. This image is a visualization, not an additional experimental measurement.",8,4);
+      }
+    }
+
+    // Reproducibility / limitations
+    section("Reproducibility and limitations");
+    line("All structural measurements in this public browser build were calculated locally from the PDB coordinates supplied or retrieved from RCSB. The PROTAC pose is not inferred from SMILES when a coordinate ligand is absent.",8,3);
+    line("The 4-ligase matrix currently uses the transparent browser chemistry index for CRBN, VHL, MDM2 and cIAP1; it is not an E3-specific validated degradation model.",8,3);
+    line("No DC50, Dmax, degradation probability, or experimental efficacy value is generated by this report.",8,3);
+    line("Lysine exposure is a packing-neighborhood proxy and should not be interpreted as direct SASA or ubiquitination probability.",8,3);
+    line("This report contains the analysis values available in the current browser application at export time.",8,4);
+
+    // Footer on all pages
+    const pageCount=doc.getNumberOfPages();
+    for(let p=1;p<=pageCount;p++){
+      doc.setPage(p);
+      doc.setFontSize(7);
+      doc.setTextColor(120,135,148);
+      doc.text(`PROTAC-GEO · Rahul Thakur · Page ${p} of ${pageCount}`,left,289);
+    }
+
+    doc.save("PROTAC-GEO_Complete_Analysis_Dossier.pdf");
+    setStatus("Complete browser PDF dossier generated with all analysis sections and the protein screenshot.","ok");
   }
 
   function clearAll() {
